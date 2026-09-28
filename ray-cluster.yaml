@@ -1,0 +1,126 @@
+apiVersion: ray.io/v1
+kind: RayCluster
+metadata:
+  name: ray-hyperpod-training
+  namespace: ray-training
+  labels:
+    app: ray-training
+    sagemaker.amazonaws.com/cluster-name: hyperpod-cluster
+spec:
+  rayVersion: "2.56.1"
+  enableInTreeAutoscaling: true
+  autoscalerOptions:
+    upscalingMode: Default
+    idleTimeoutSeconds: 300
+    resources:
+      limits:
+        cpu: "2"
+        memory: "4Gi"
+      requests:
+        cpu: "1"
+        memory: "2Gi"
+  headGroupSpec:
+    serviceType: ClusterIP
+    rayStartParams:
+      dashboard-host: "0.0.0.0"
+      num-cpus: "0"
+    template:
+      metadata:
+        labels:
+          ray-node-type: head
+      spec:
+        serviceAccountName: ray-training-sa
+        containers:
+          - name: ray-head
+            image: rayproject/ray-ml:2.56.1-py311-gpu
+            ports:
+              - containerPort: 6379
+                name: gcs-server
+              - containerPort: 8265
+                name: dashboard
+              - containerPort: 10001
+                name: client
+              - containerPort: 8000
+                name: serve
+            resources:
+              limits:
+                cpu: "8"
+                memory: "32Gi"
+              requests:
+                cpu: "4"
+                memory: "16Gi"
+            env:
+              - name: RAY_GRAFANA_HOST
+                value: "http://grafana:3000"
+              - name: RAY_PROMETHEUS_HOST
+                value: "http://prometheus:9090"
+              - name: HF_HOME
+                value: "/mnt/fsx/huggingface"
+            volumeMounts:
+              - name: fsx-storage
+                mountPath: /mnt/fsx
+              - name: shared-mem
+                mountPath: /dev/shm
+        volumes:
+          - name: fsx-storage
+            persistentVolumeClaim:
+              claimName: fsx-pvc
+          - name: shared-mem
+            emptyDir:
+              medium: Memory
+              sizeLimit: "16Gi"
+        tolerations:
+          - key: "nvidia.com/gpu"
+            operator: "Exists"
+            effect: "NoSchedule"
+  workerGroupSpecs:
+    - replicas: 2
+      minReplicas: 1
+      maxReplicas: 8
+      groupName: gpu-workers
+      rayStartParams:
+        num-gpus: "4"
+      template:
+        metadata:
+          labels:
+            ray-node-type: worker
+        spec:
+          serviceAccountName: ray-training-sa
+          containers:
+            - name: ray-worker
+              image: rayproject/ray-ml:2.56.1-py311-gpu
+              resources:
+                limits:
+                  cpu: "48"
+                  memory: "192Gi"
+                  nvidia.com/gpu: "4"
+                requests:
+                  cpu: "32"
+                  memory: "128Gi"
+                  nvidia.com/gpu: "4"
+              env:
+                - name: HF_HOME
+                  value: "/mnt/fsx/huggingface"
+                - name: NCCL_DEBUG
+                  value: "INFO"
+                - name: NCCL_SOCKET_IFNAME
+                  value: "eth0"
+              volumeMounts:
+                - name: fsx-storage
+                  mountPath: /mnt/fsx
+                - name: shared-mem
+                  mountPath: /dev/shm
+          volumes:
+            - name: fsx-storage
+              persistentVolumeClaim:
+                claimName: fsx-pvc
+            - name: shared-mem
+              emptyDir:
+                medium: Memory
+                sizeLimit: "64Gi"
+          tolerations:
+            - key: "nvidia.com/gpu"
+              operator: "Exists"
+              effect: "NoSchedule"
+          nodeSelector:
+            node.kubernetes.io/instance-type: g5.12xlarge

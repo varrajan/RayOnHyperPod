@@ -1,0 +1,63 @@
+# HyperPod Cluster — FSx for Lustre PVC and Ray namespace setup
+
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: ray-training
+  labels:
+    sagemaker.amazonaws.com/cluster-name: hyperpod-cluster
+
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: ray-training-sa
+  namespace: ray-training
+  annotations:
+    eks.amazonaws.com/role-arn: arn:aws:iam::ACCOUNT_ID:role/HyperPodRayTrainingRole
+
+---
+# FSx for Lustre PersistentVolume
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: fsx-pv
+spec:
+  capacity:
+    storage: 1200Gi
+  volumeMode: Filesystem
+  accessModes:
+    - ReadWriteMany
+  mountOptions:
+    - flock
+  persistentVolumeReclaimPolicy: Retain
+  csi:
+    driver: fsx.csi.aws.com
+    volumeHandle: fs-0EXAMPLE
+    volumeAttributes:
+      dnsname: fs-0EXAMPLE.fsx.us-east-1.amazonaws.com
+      mountname: fsx
+
+---
+# FSx PVC
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: fsx-pvc
+  namespace: ray-training
+spec:
+  accessModes:
+    - ReadWriteMany
+  storageClassName: ""
+  resources:
+    requests:
+      storage: 1200Gi
+  volumeName: fsx-pv
+
+---
+# KubeRay Operator (install via Helm — this is a reference)
+# helm repo add kuberay https://ray-project.github.io/kuberay-helm/
+# helm install kuberay-operator kuberay/kuberay-operator \
+#   --namespace ray-system --create-namespace \
+#   --set image.tag=v1.3.0
